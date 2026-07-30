@@ -21,7 +21,7 @@ const db = new Dexie('notesmith') as Dexie & {
 db.version(1).stores({
   notes: 'id, title, updatedAt',
   settings: 'key',
-});
+} as const);
 
 export { db };
 
