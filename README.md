@@ -1,6 +1,6 @@
 # notesmith
 
-**Live:** [notesmith-app.vercel.app](https://notesmith-app.vercel.app)
+**Live:** [mynotesmith.vercel.app](https://mynotesmith.vercel.app)
 
 A local-first code editor and Markdown notepad that runs entirely in the browser. Open a real folder from your disk, edit files with syntax highlighting and linting, or keep quick notes in browser storage. No account, no server, no backend.
 
