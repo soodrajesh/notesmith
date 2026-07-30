@@ -1,5 +1,7 @@
 # notesmith
 
+**Live:** [notesmith-iota.vercel.app](https://notesmith-iota.vercel.app)
+
 A local-first Markdown notes app. Split-pane editor with live preview, notes stored in your browser, and optional two-way sync to a real folder of `.md` files on disk. No account, no server, no backend.
 
 ## Features
