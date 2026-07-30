@@ -7,6 +7,10 @@ import QuickOpen from './QuickOpen';
 import { db, newNote, type Note } from './db';
 import {
   closeWorkspace,
+  createFile,
+  createFolder,
+  deleteEntry,
+  deleteEntryRecursive,
   fsSupported,
   hasStoredWorkspace,
   isBinary,
@@ -20,6 +24,8 @@ import {
 } from './files';
 import { languageName } from './lang';
 import { hasDeepLinter } from './linters';
+import SettingsPanel from './SettingsPanel';
+import { loadSettings, saveSettings, type Settings as SettingsType } from './settings';
 import './App.css';
 
 type WorkspaceState = 'none' | 'open' | 'needs-permission';
@@ -59,6 +65,12 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [cursor, setCursor] = useState({ line: 1, col: 1 });
   const [status, setStatus] = useState('');
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState<SettingsType>({
+    fontSize: 13,
+    tabWidth: 2,
+    theme: 'dark',
+  });
 
   const noteTimer = useRef<number | null>(null);
   const booted = useRef(false);
@@ -97,6 +109,9 @@ export default function App() {
     if (booted.current) return;
     booted.current = true;
     (async () => {
+      const stored = await loadSettings();
+      setSettings(stored);
+
       let all = await refreshNotes();
       if (all.length === 0) {
         const first = newNote('Welcome');
@@ -173,6 +188,96 @@ export default function App() {
     setWorkspace('none');
     setTabs((prev) => prev.filter((t) => t.kind !== 'file'));
     setActiveId((id) => (id?.startsWith('file:') ? null : id));
+  };
+
+  const readHandle = useCallback(async () => {
+    const row = await db.settings.get('workspaceDirHandle');
+    return (row?.value as FileSystemDirectoryHandle) ?? null;
+  }, []);
+
+  const updateSettings = async (newSettings: SettingsType) => {
+    setSettings(newSettings);
+    await saveSettings(newSettings);
+  };
+
+  const getNodeByPath = (path: string, nodes: TreeNode[] = tree): TreeNode | null => {
+    for (const node of nodes) {
+      if (node.path === path) return node;
+      if (node.children) {
+        const found = getNodeByPath(path, node.children);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  const handleCreateFile = async (dirPath: string) => {
+    const name = prompt('New file name:');
+    if (!name) return;
+    try {
+      const node = getNodeByPath(dirPath);
+      if (!node || node.kind !== 'directory') return;
+      const handle = node.handle as FileSystemDirectoryHandle;
+      await createFile(handle, name);
+      const newTree = await readTree(handle);
+      setTree(newTree);
+      flash(`Created ${name}`);
+    } catch {
+      flash(`Could not create file: ${name}`);
+    }
+  };
+
+  const handleCreateFolder = async (dirPath: string) => {
+    const name = prompt('New folder name:');
+    if (!name) return;
+    try {
+      const node = getNodeByPath(dirPath);
+      if (!node || node.kind !== 'directory') return;
+      const handle = node.handle as FileSystemDirectoryHandle;
+      await createFolder(handle, name);
+      const newTree = await readTree(handle);
+      setTree(newTree);
+      flash(`Created folder ${name}`);
+    } catch {
+      flash(`Could not create folder: ${name}`);
+    }
+  };
+
+  const handleDeleteFile = async (filePath: string) => {
+    if (!confirm(`Delete ${filePath}?`)) return;
+    try {
+      const node = getNodeByPath(filePath);
+      if (!node || node.kind !== 'file') return;
+      await deleteEntry(node.handle);
+      const id = `file:${filePath}`;
+      setTabs((prev) => prev.filter((t) => t.id !== id));
+      setActiveId((cur) => (cur === id ? null : cur));
+      const root = await readTree(
+        (await readHandle()) || (tree[0]?.handle as FileSystemDirectoryHandle),
+      );
+      setTree(root);
+      flash(`Deleted ${filePath}`);
+    } catch {
+      flash(`Could not delete ${filePath}`);
+    }
+  };
+
+  const handleDeleteFolder = async (dirPath: string) => {
+    if (!confirm(`Delete folder ${dirPath} and all contents?`)) return;
+    try {
+      const node = getNodeByPath(dirPath);
+      if (!node || node.kind !== 'directory') return;
+      await deleteEntryRecursive(node.handle);
+      setTabs((prev) => prev.filter((t) => !t.path?.startsWith(dirPath)));
+      setActiveId((id) => (id?.startsWith(`file:${dirPath}`) ? null : id));
+      const root = await readTree(
+        (await readHandle()) || (tree[0]?.handle as FileSystemDirectoryHandle),
+      );
+      setTree(root);
+      flash(`Deleted folder ${dirPath}`);
+    } catch {
+      flash(`Could not delete folder ${dirPath}`);
+    }
   };
 
   /* ── Editing ───────────────────────────────────────────── */
@@ -274,13 +379,25 @@ export default function App() {
   const activePath = active?.kind === 'file' ? (active.path ?? null) : null;
 
   return (
-    <div className="app">
+    <>
+      <style>{`
+        :root {
+          --editor-font-size: ${settings.fontSize}px;
+          --tab-width: ${settings.tabWidth};
+        }
+      `}</style>
+      <div className="app">
       <aside className="sidebar">
         <div className="brand">
           <h1>notesmith</h1>
-          <button className="primary" onClick={createNote} title="New note">
-            +
-          </button>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button className="link" onClick={() => setShowSettings(!showSettings)} title="Settings">
+              ⚙
+            </button>
+            <button className="primary" onClick={createNote} title="New note">
+              +
+            </button>
+          </div>
         </div>
 
         <div className="section">
@@ -317,6 +434,10 @@ export default function App() {
                   })
                 }
                 onOpenFile={openFile}
+                onCreateFile={handleCreateFile}
+                onCreateFolder={handleCreateFolder}
+                onDeleteFile={handleDeleteFile}
+                onDeleteFolder={handleDeleteFolder}
               />
             </div>
           )}
@@ -439,7 +560,16 @@ export default function App() {
           onClose={() => setPaletteOpen(false)}
         />
       )}
+
+      {showSettings && (
+        <SettingsPanel
+          settings={settings}
+          onClose={() => setShowSettings(false)}
+          onChange={updateSettings}
+        />
+      )}
     </div>
+    </>
   );
 }
 

@@ -125,3 +125,27 @@ export async function writeFile(handle: FileSystemFileHandle, text: string): Pro
   await writable.write(text);
   await writable.close();
 }
+
+export async function createFile(
+  dirHandle: FileSystemDirectoryHandle,
+  name: string,
+): Promise<FileSystemFileHandle> {
+  return dirHandle.getFileHandle(name, { create: true });
+}
+
+export async function createFolder(
+  dirHandle: FileSystemDirectoryHandle,
+  name: string,
+): Promise<FileSystemDirectoryHandle> {
+  return dirHandle.getDirectoryHandle(name, { create: true });
+}
+
+export async function deleteEntry(handle: FileSystemHandle): Promise<void> {
+  if (!('remove' in handle)) throw new Error('Delete not supported in this browser');
+  await (handle as any).remove();
+}
+
+export async function deleteEntryRecursive(handle: FileSystemHandle): Promise<void> {
+  if (!('remove' in handle)) throw new Error('Delete not supported in this browser');
+  await (handle as any).remove({ recursive: true });
+}
