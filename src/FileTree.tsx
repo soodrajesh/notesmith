@@ -12,6 +12,9 @@ interface Props {
   onCreateFolder?: (dirPath: string) => void;
   onDeleteFile?: (filePath: string) => void;
   onDeleteFolder?: (dirPath: string) => void;
+  onRenameFile?: (filePath: string) => void;
+  onRenameFolder?: (dirPath: string) => void;
+  onMoveEntry?: (srcPath: string, srcKind: 'file' | 'directory', destDirPath: string) => void;
 }
 
 export default function FileTree({
@@ -25,14 +28,19 @@ export default function FileTree({
   onCreateFolder,
   onDeleteFile,
   onDeleteFolder,
+  onRenameFile,
+  onRenameFolder,
+  onMoveEntry,
 }: Props) {
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   return (
     <ul className="tree">
       {nodes.map((node) => {
         const isOpen = expanded.has(node.path);
         const isHovered = hoveredPath === node.path;
+        const isDropTarget = dropTarget === node.path;
 
         return (
           <li key={node.path}>
@@ -42,8 +50,36 @@ export default function FileTree({
               onMouseLeave={() => setHoveredPath(null)}
             >
               <button
-                className={`tree-row${node.path === activePath ? ' active' : ''}`}
+                className={`tree-row${node.path === activePath ? ' active' : ''}${isDropTarget ? ' drop-target' : ''}`}
                 style={{ paddingLeft: 8 + depth * 12 }}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('text/plain', JSON.stringify({ path: node.path, kind: node.kind }));
+                }}
+                onDragOver={(e) => {
+                  if (node.kind !== 'directory') return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dropTarget !== node.path) setDropTarget(node.path);
+                }}
+                onDragLeave={() => {
+                  if (dropTarget === node.path) setDropTarget(null);
+                }}
+                onDrop={(e) => {
+                  if (node.kind !== 'directory') return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDropTarget(null);
+                  const raw = e.dataTransfer.getData('text/plain');
+                  if (!raw) return;
+                  try {
+                    const { path, kind } = JSON.parse(raw) as { path: string; kind: 'file' | 'directory' };
+                    onMoveEntry?.(path, kind, node.path);
+                  } catch {
+                    /* ignore malformed drag payload */
+                  }
+                }}
                 onClick={() =>
                   node.kind === 'directory' ? onToggleDir(node.path) : onOpenFile(node)
                 }
@@ -81,6 +117,20 @@ export default function FileTree({
                     </>
                   )}
                   <button
+                    className="tree-action"
+                    title="Rename"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (node.kind === 'directory') {
+                        onRenameFolder?.(node.path);
+                      } else {
+                        onRenameFile?.(node.path);
+                      }
+                    }}
+                  >
+                    ✎
+                  </button>
+                  <button
                     className="tree-action delete"
                     title="Delete"
                     onClick={(e) => {
@@ -109,6 +159,9 @@ export default function FileTree({
                 onCreateFolder={onCreateFolder}
                 onDeleteFile={onDeleteFile}
                 onDeleteFolder={onDeleteFolder}
+                onRenameFile={onRenameFile}
+                onRenameFolder={onRenameFolder}
+                onMoveEntry={onMoveEntry}
               />
             )}
           </li>

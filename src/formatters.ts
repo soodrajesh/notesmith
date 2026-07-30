@@ -6,32 +6,35 @@ function once<T>(load: () => Promise<T>): () => Promise<T> {
   return () => (cached ??= load());
 }
 
+// Prettier v3 moved parsers under `prettier/plugins/*`; each module's named
+// exports (`parsers`/`printers`) ARE the plugin object — no default export.
 const loadPrettier = once(async () => {
-  const [prettier, babel, typescript, css, html, markdown, yaml] = await Promise.all([
+  const [prettier, babel, estree, typescript, postcss, html, markdown, yaml] = await Promise.all([
     import('prettier/standalone'),
-    import('prettier/parser-babel'),
-    import('prettier/parser-typescript'),
-    import('prettier/parser-postcss'),
-    import('prettier/parser-html'),
-    import('prettier/parser-markdown'),
-    import('prettier/parser-yaml'),
+    import('prettier/plugins/babel'),
+    import('prettier/plugins/estree'),
+    import('prettier/plugins/typescript'),
+    import('prettier/plugins/postcss'),
+    import('prettier/plugins/html'),
+    import('prettier/plugins/markdown'),
+    import('prettier/plugins/yaml'),
   ]);
-  return { prettier, babel, typescript, css, html, markdown, yaml };
+  return { prettier, babel, estree, typescript, postcss, html, markdown, yaml };
 });
 
 /** Which languages prettier can format. */
 export function canFormat(filename: string): boolean {
   const ext = extOf(filename);
-  return /^(js|jsx|ts|tsx|mjs|cjs|json|css|scss|less|html|htm|md|markdown|yaml|yml)$/.test(ext);
+  return /^(js|jsx|ts|tsx|mjs|cjs|json|jsonc|css|scss|less|html|htm|md|markdown|yaml|yml)$/.test(ext);
 }
 
 /** Format code using prettier. Returns formatted code or throws. */
 export async function formatCode(filename: string, code: string): Promise<string> {
-  const { prettier, babel, typescript, css, html, markdown, yaml } = await loadPrettier();
+  const { prettier, babel, estree, typescript, postcss, html, markdown, yaml } = await loadPrettier();
   const ext = extOf(filename);
 
   let parser: string;
-  let plugins: any[] = [];
+  let plugins: unknown[];
 
   switch (ext) {
     case 'js':
@@ -39,42 +42,51 @@ export async function formatCode(filename: string, code: string): Promise<string
     case 'cjs':
     case 'jsx':
       parser = 'babel';
-      plugins = [(babel as any).default];
+      plugins = [babel, estree];
       break;
     case 'ts':
     case 'tsx':
       parser = 'typescript';
-      plugins = [(typescript as any).default];
+      plugins = [typescript, estree];
       break;
     case 'json':
-    case 'jsonc':
       parser = 'json';
-      plugins = [(babel as any).default];
+      plugins = [babel, estree];
+      break;
+    case 'jsonc':
+      parser = 'jsonc';
+      plugins = [babel, estree];
       break;
     case 'css':
+      parser = 'css';
+      plugins = [postcss];
+      break;
     case 'scss':
-    case 'less':
       parser = 'scss';
-      plugins = [(css as any).default];
+      plugins = [postcss];
+      break;
+    case 'less':
+      parser = 'less';
+      plugins = [postcss];
       break;
     case 'html':
     case 'htm':
       parser = 'html';
-      plugins = [(html as any).default];
+      plugins = [html];
       break;
     case 'md':
     case 'markdown':
       parser = 'markdown';
-      plugins = [(markdown as any).default];
+      plugins = [markdown];
       break;
     case 'yaml':
     case 'yml':
       parser = 'yaml';
-      plugins = [(yaml as any).default];
+      plugins = [yaml];
       break;
     default:
       throw new Error(`No parser for ${ext}`);
   }
 
-  return (prettier as any).format(code, { parser, plugins });
+  return prettier.format(code, { parser, plugins: plugins as never });
 }

@@ -14,6 +14,8 @@ import {
   fsSupported,
   hasStoredWorkspace,
   isBinary,
+  moveFile,
+  moveFolder,
   pickWorkspace,
   readFile,
   readTree,
@@ -24,8 +26,10 @@ import {
 } from './files';
 import { languageName } from './lang';
 import { hasDeepLinter } from './linters';
+import { canFormat, formatCode } from './formatters';
 import SettingsPanel from './SettingsPanel';
 import { loadSettings, saveSettings, type Settings as SettingsType } from './settings';
+import { loadSession, saveSession, type SessionTab } from './session';
 import './App.css';
 
 type WorkspaceState = 'none' | 'open' | 'needs-permission';
@@ -74,9 +78,17 @@ export default function App() {
 
   const noteTimer = useRef<number | null>(null);
   const booted = useRef(false);
+  const sessionRestored = useRef(false);
 
   const active = tabs.find((t) => t.id === activeId) ?? null;
   const allFiles = useMemo(() => flatten(tree), [tree]);
+
+  // A note titled "main.tf" should edit as Terraform; untitled ones default to Markdown.
+  const activeFilename = !active
+    ? ''
+    : active.kind === 'file' || active.name.includes('.')
+      ? active.name
+      : `${active.name}.md`;
 
   const flash = useCallback((msg: string) => {
     setStatus(msg);
@@ -126,8 +138,73 @@ export default function App() {
         if (restored) await loadTree(restored);
         else if (await hasStoredWorkspace()) setWorkspace('needs-permission');
       }
+
+      const session = await loadSession();
+      if (session && session.tabs.length) {
+        const restoredTabs: Tab[] = [];
+        for (const st of session.tabs) {
+          if (st.kind === 'note' && st.noteId) {
+            const note = all.find((n) => n.id === st.noteId);
+            if (note) {
+              restoredTabs.push({
+                id: `note:${note.id}`,
+                kind: 'note',
+                name: note.title || 'Untitled',
+                body: note.body,
+                dirty: false,
+              });
+            }
+          } else if (st.kind === 'file' && st.handle && st.path) {
+            try {
+              const granted = (await st.handle.queryPermission({ mode: 'readwrite' })) === 'granted';
+              if (granted) {
+                const body = await readFile(st.handle);
+                restoredTabs.push({
+                  id: `file:${st.path}`,
+                  kind: 'file',
+                  name: st.path.split('/').pop() || st.path,
+                  path: st.path,
+                  handle: st.handle,
+                  body,
+                  dirty: false,
+                });
+              }
+            } catch {
+              /* handle stale or inaccessible — skip this tab */
+            }
+          }
+        }
+        if (restoredTabs.length) {
+          setTabs(restoredTabs);
+          const key = session.activeKey;
+          const match = restoredTabs.find((t) =>
+            t.kind === 'note' ? t.id.slice('note:'.length) === key : t.path === key,
+          );
+          setActiveId((match ?? restoredTabs[0]).id);
+        }
+      }
+      sessionRestored.current = true;
     })();
   }, [refreshNotes, openNote, loadTree]);
+
+  useEffect(() => {
+    if (!sessionRestored.current) return;
+    const timer = window.setTimeout(() => {
+      const sessionTabs: SessionTab[] = tabs.map((t) =>
+        t.kind === 'note'
+          ? { kind: 'note', noteId: t.id.slice('note:'.length) }
+          : { kind: 'file', path: t.path, handle: t.handle },
+      );
+      const activeTab = tabs.find((t) => t.id === activeId);
+      const activeKey = activeTab
+        ? activeTab.kind === 'note'
+          ? activeTab.id.slice('note:'.length)
+          : (activeTab.path ?? null)
+        : null;
+      saveSession({ tabs: sessionTabs, activeKey });
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [tabs, activeId]);
 
   /* ── Files ─────────────────────────────────────────────── */
 
@@ -162,6 +239,21 @@ export default function App() {
       flash(`Could not save ${active.name}`);
     }
   }, [active, flash]);
+
+  const handleFormat = useCallback(async () => {
+    if (!active || !canFormat(activeFilename)) return;
+    try {
+      const formatted = await formatCode(activeFilename, active.body);
+      if (formatted === active.body) return;
+      const tabId = active.id;
+      setTabs((prev) =>
+        prev.map((t) => (t.id === tabId ? { ...t, body: formatted, dirty: t.kind === 'file' } : t)),
+      );
+      flash('Formatted');
+    } catch {
+      flash('Could not format — check for syntax errors');
+    }
+  }, [active, activeFilename, flash]);
 
   const openFolder = async () => {
     let handle: FileSystemDirectoryHandle | null = null;
@@ -280,6 +372,115 @@ export default function App() {
     }
   };
 
+  const handleRenameFile = async (filePath: string) => {
+    const node = getNodeByPath(filePath);
+    if (!node || node.kind !== 'file') return;
+    const oldName = node.name;
+    const newName = prompt('Rename file:', oldName);
+    if (!newName || newName === oldName) return;
+    try {
+      const parentPath = filePath.includes('/') ? filePath.slice(0, filePath.lastIndexOf('/')) : '';
+      const parentHandle = parentPath
+        ? (getNodeByPath(parentPath)?.handle as FileSystemDirectoryHandle)
+        : ((await readHandle()) as FileSystemDirectoryHandle);
+      if (!parentHandle) return;
+      await moveFile(node.handle as FileSystemFileHandle, parentHandle, newName);
+      const rootHandle = (await readHandle()) || (tree[0]?.handle as FileSystemDirectoryHandle);
+      const newTree = await readTree(rootHandle);
+      setTree(newTree);
+
+      const newPath = parentPath ? `${parentPath}/${newName}` : newName;
+      const oldId = `file:${filePath}`;
+      const newId = `file:${newPath}`;
+      const newNode = getNodeByPath(newPath, newTree);
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === oldId
+            ? { ...t, id: newId, name: newName, path: newPath, handle: newNode?.handle as FileSystemFileHandle }
+            : t,
+        ),
+      );
+      setActiveId((cur) => (cur === oldId ? newId : cur));
+      flash(`Renamed to ${newName}`);
+    } catch {
+      flash(`Could not rename ${oldName}`);
+    }
+  };
+
+  const handleRenameFolder = async (dirPath: string) => {
+    const node = getNodeByPath(dirPath);
+    if (!node || node.kind !== 'directory') return;
+    const oldName = node.name;
+    const newName = prompt('Rename folder:', oldName);
+    if (!newName || newName === oldName) return;
+    try {
+      const parentPath = dirPath.includes('/') ? dirPath.slice(0, dirPath.lastIndexOf('/')) : '';
+      const parentHandle = parentPath
+        ? (getNodeByPath(parentPath)?.handle as FileSystemDirectoryHandle)
+        : ((await readHandle()) as FileSystemDirectoryHandle);
+      if (!parentHandle) return;
+      await moveFolder(node.handle as FileSystemDirectoryHandle, parentHandle, newName);
+      const rootHandle = (await readHandle()) || (tree[0]?.handle as FileSystemDirectoryHandle);
+      const newTree = await readTree(rootHandle);
+      setTree(newTree);
+      setTabs((prev) => prev.filter((t) => !t.path?.startsWith(dirPath)));
+      setActiveId((id) => (id?.startsWith(`file:${dirPath}`) ? null : id));
+      flash(`Renamed to ${newName}`);
+    } catch {
+      flash(`Could not rename ${oldName}`);
+    }
+  };
+
+  const handleMoveEntry = async (
+    srcPath: string,
+    srcKind: 'file' | 'directory',
+    destDirPath: string,
+  ) => {
+    if (srcPath === destDirPath) return;
+    if (srcKind === 'directory' && (destDirPath === srcPath || destDirPath.startsWith(`${srcPath}/`))) {
+      return flash('Cannot move a folder into itself');
+    }
+    const srcParentPath = srcPath.includes('/') ? srcPath.slice(0, srcPath.lastIndexOf('/')) : '';
+    if (srcParentPath === destDirPath) return; // already in that folder
+
+    const node = getNodeByPath(srcPath);
+    const destNode = getNodeByPath(destDirPath);
+    if (!node || !destNode || destNode.kind !== 'directory') return;
+    const destHandle = destNode.handle as FileSystemDirectoryHandle;
+
+    try {
+      if (srcKind === 'file') {
+        await moveFile(node.handle as FileSystemFileHandle, destHandle, node.name);
+      } else {
+        await moveFolder(node.handle as FileSystemDirectoryHandle, destHandle, node.name);
+      }
+      const rootHandle = (await readHandle()) || (tree[0]?.handle as FileSystemDirectoryHandle);
+      const newTree = await readTree(rootHandle);
+      setTree(newTree);
+
+      const newPath = destDirPath ? `${destDirPath}/${node.name}` : node.name;
+      if (srcKind === 'file') {
+        const oldId = `file:${srcPath}`;
+        const newId = `file:${newPath}`;
+        const newNode = getNodeByPath(newPath, newTree);
+        setTabs((prev) =>
+          prev.map((t) =>
+            t.id === oldId
+              ? { ...t, id: newId, name: node.name, path: newPath, handle: newNode?.handle as FileSystemFileHandle }
+              : t,
+          ),
+        );
+        setActiveId((cur) => (cur === oldId ? newId : cur));
+      } else {
+        setTabs((prev) => prev.filter((t) => !t.path?.startsWith(srcPath)));
+        setActiveId((id) => (id?.startsWith(`file:${srcPath}`) ? null : id));
+      }
+      flash(`Moved ${node.name}`);
+    } catch {
+      flash(`Could not move ${node.name}`);
+    }
+  };
+
   /* ── Editing ───────────────────────────────────────────── */
 
   const onBodyChange = (value: string) => {
@@ -354,13 +555,16 @@ export default function App() {
       } else if (mod && e.key.toLowerCase() === 'p' && !e.shiftKey) {
         e.preventDefault();
         if (allFiles.length) setPaletteOpen(true);
+      } else if (e.altKey && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        handleFormat();
       } else if (e.key === 'Escape') {
         setPaletteOpen(false);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [saveActive, allFiles.length]);
+  }, [saveActive, handleFormat, allFiles.length]);
 
   /* ── Render ────────────────────────────────────────────── */
 
@@ -372,12 +576,6 @@ export default function App() {
     );
   }, [notes, query]);
 
-  // A note titled "main.tf" should edit as Terraform; untitled ones default to Markdown.
-  const activeFilename = !active
-    ? ''
-    : active.kind === 'file' || active.name.includes('.')
-      ? active.name
-      : `${active.name}.md`;
   const isMarkdown = /\.(md|markdown)$/i.test(activeFilename);
   const showPreview = preview && isMarkdown;
   const activePath = active?.kind === 'file' ? (active.path ?? null) : null;
@@ -442,6 +640,9 @@ export default function App() {
                 onCreateFolder={handleCreateFolder}
                 onDeleteFile={handleDeleteFile}
                 onDeleteFolder={handleDeleteFolder}
+                onRenameFile={handleRenameFile}
+                onRenameFolder={handleRenameFolder}
+                onMoveEntry={handleMoveEntry}
               />
             </div>
           )}
@@ -506,6 +707,11 @@ export default function App() {
               {isMarkdown && (
                 <button onClick={() => setPreview((p) => !p)}>
                   {preview ? 'Hide preview' : 'Show preview'}
+                </button>
+              )}
+              {canFormat(activeFilename) && (
+                <button onClick={handleFormat} title="⌥⇧F">
+                  Format
                 </button>
               )}
               {active.kind === 'file' && (

@@ -67,6 +67,102 @@ async function lintJs(doc: Text): Promise<Diagnostic[]> {
   });
 }
 
+/* ── TypeScript ─────────────────────────────────────────────── */
+
+const ENTRY_FILE = '/__entry.tsx';
+
+/** Every lib.*.d.ts from the installed TypeScript, fetched lazily and cached by filename. */
+const loadTsLibs = once(async () => {
+  const loaders = import.meta.glob('/node_modules/typescript/lib/lib.*.d.ts', {
+    query: '?raw',
+    import: 'default',
+  }) as Record<string, () => Promise<string>>;
+  const entries = await Promise.all(
+    Object.entries(loaders).map(async ([path, load]) => {
+      const name = path.slice(path.lastIndexOf('/') + 1);
+      return [name, await load()] as const;
+    }),
+  );
+  return new Map(entries);
+});
+
+const loadTs = once(async () => {
+  const [tsModule, libs] = await Promise.all([import('typescript'), loadTsLibs()]);
+  return { ts: tsModule, libs };
+});
+
+/** Diagnostic codes about unresolvable modules/JSX runtime — noise since we only check one file in isolation. */
+const IGNORED_TS_CODES = new Set([2307, 2306, 7016, 2792, 2686, 6059, 18028, 2582, 7026, 2875, 2503]);
+
+async function lintTs(doc: Text, filename: string): Promise<Diagnostic[]> {
+  const { ts, libs } = await loadTs();
+  const code = doc.toString();
+  const isJsx = /\.tsx$/i.test(filename);
+  const entryFile = isJsx ? ENTRY_FILE : ENTRY_FILE.replace(/\.tsx$/, '.ts');
+
+  const options: import('typescript').CompilerOptions = {
+    target: ts.ScriptTarget.ES2023,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    jsx: isJsx ? ts.JsxEmit.ReactJSX : ts.JsxEmit.None,
+    strict: true,
+    skipLibCheck: true,
+    noEmit: true,
+    allowJs: false,
+    esModuleInterop: true,
+  };
+
+  const host: import('typescript').CompilerHost = {
+    getSourceFile(fileName, languageVersion) {
+      if (fileName === entryFile) {
+        return ts.createSourceFile(fileName, code, languageVersion, true);
+      }
+      const base = fileName.slice(fileName.lastIndexOf('/') + 1);
+      const libSource = libs.get(base);
+      if (libSource !== undefined) {
+        return ts.createSourceFile(fileName, libSource, languageVersion, true);
+      }
+      return undefined;
+    },
+    getDefaultLibFileName: (opts) => ts.getDefaultLibFileName(opts),
+    writeFile: () => {},
+    getCurrentDirectory: () => '/',
+    getCanonicalFileName: (f) => f,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => '\n',
+    fileExists: (fileName) => fileName === entryFile || libs.has(fileName.slice(fileName.lastIndexOf('/') + 1)),
+    readFile: () => undefined,
+    // Every import resolves to nothing — this checks one file in isolation, so cross-file/module diagnostics are filtered below.
+    resolveModuleNames: (names) => names.map(() => undefined),
+  };
+
+  let program: import('typescript').Program;
+  try {
+    program = ts.createProgram([entryFile], options, host);
+  } catch {
+    return [];
+  }
+
+  const sourceFile = program.getSourceFile(entryFile);
+  if (!sourceFile) return [];
+
+  const diagnostics = [
+    ...program.getSyntacticDiagnostics(sourceFile),
+    ...program.getSemanticDiagnostics(sourceFile),
+  ].filter((d) => !IGNORED_TS_CODES.has(d.code));
+
+  return diagnostics.slice(0, MAX_DIAGNOSTICS).map((d) => {
+    const from = d.start ?? 0;
+    const to = from + (d.length ?? 1);
+    return {
+      ...span(doc, from, to),
+      severity: d.category === ts.DiagnosticCategory.Warning ? ('warning' as const) : ('error' as const),
+      message: `${ts.flattenDiagnosticMessageText(d.messageText, ' ')} (TS${d.code})`,
+      source: 'typescript',
+    };
+  });
+}
+
 /* ── JSON ───────────────────────────────────────────────────── */
 
 function lintJson(doc: Text): Diagnostic[] {
@@ -252,8 +348,9 @@ function lintMarkdown(doc: Text): Diagnostic[] {
 
 /* ── Wiring ─────────────────────────────────────────────────── */
 
-const DEEP: Record<string, (doc: Text) => Diagnostic[] | Promise<Diagnostic[]>> = {
+const DEEP: Record<string, (doc: Text, filename: string) => Diagnostic[] | Promise<Diagnostic[]>> = {
   js: lintJs,
+  ts: lintTs,
   json: lintJson,
   css: lintCss,
   html: lintHtml,
@@ -270,7 +367,7 @@ export function diagnosticsFor(
   filename: string,
   doc: Text,
 ): Diagnostic[] | Promise<Diagnostic[]> {
-  return DEEP[lintKind(filename)]?.(doc) ?? [];
+  return DEEP[lintKind(filename)]?.(doc, filename) ?? [];
 }
 
 /**

@@ -149,3 +149,48 @@ export async function deleteEntryRecursive(handle: FileSystemHandle): Promise<vo
   if (!('remove' in handle)) throw new Error('Delete not supported in this browser');
   await (handle as any).remove({ recursive: true });
 }
+
+async function copyFile(
+  src: FileSystemFileHandle,
+  destParent: FileSystemDirectoryHandle,
+  destName: string,
+): Promise<void> {
+  const content = await readFile(src);
+  const dest = await createFile(destParent, destName);
+  await writeFile(dest, content);
+}
+
+async function copyDir(
+  src: FileSystemDirectoryHandle,
+  destParent: FileSystemDirectoryHandle,
+  destName: string,
+): Promise<void> {
+  const dest = await createFolder(destParent, destName);
+  for await (const entry of src.values()) {
+    if (entry.kind === 'file') {
+      await copyFile(entry as FileSystemFileHandle, dest, entry.name);
+    } else {
+      await copyDir(entry as FileSystemDirectoryHandle, dest, entry.name);
+    }
+  }
+}
+
+/** Renames or relocates a file. The File System Access API has no native move, so this copies then deletes the original. */
+export async function moveFile(
+  src: FileSystemFileHandle,
+  destParent: FileSystemDirectoryHandle,
+  destName: string,
+): Promise<void> {
+  await copyFile(src, destParent, destName);
+  await deleteEntry(src);
+}
+
+/** Renames or relocates a folder by recursively copying its contents, then deleting the original. */
+export async function moveFolder(
+  src: FileSystemDirectoryHandle,
+  destParent: FileSystemDirectoryHandle,
+  destName: string,
+): Promise<void> {
+  await copyDir(src, destParent, destName);
+  await deleteEntryRecursive(src);
+}

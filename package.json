@@ -29,7 +29,8 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "typescript": "~6.0.2"
   },
   "devDependencies": {
     "@types/css-tree": "^2.3.11",
@@ -39,7 +40,6 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
     "oxlint": "^1.75.0",
-    "typescript": "~6.0.2",
     "vite": "^8.2.0"
   }
 }

@@ -171,6 +171,12 @@ button.link:hover {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+.tree-row.drop-target {
+  background: var(--panel-2);
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+}
+
 .tree-caret {
   width: 10px;
   flex: none;

@@ -13,13 +13,17 @@ const EXTRA = [
 const ALL = [...EXTRA, ...languages];
 
 /** Which deep linter (if any) applies to a file. */
-export type LintKind = 'js' | 'json' | 'css' | 'html' | 'yaml' | 'markdown' | 'none';
+export type LintKind = 'js' | 'ts' | 'json' | 'css' | 'html' | 'yaml' | 'markdown' | 'none';
 
 const BY_EXT: Record<string, LintKind> = {
   js: 'js',
   jsx: 'js',
   mjs: 'js',
   cjs: 'js',
+  ts: 'ts',
+  tsx: 'ts',
+  mts: 'ts',
+  cts: 'ts',
   json: 'json',
   jsonc: 'json',
   css: 'css',
