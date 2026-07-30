@@ -9,6 +9,16 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+:root[data-theme='light'] {
+  --bg: #ffffff;
+  --panel: #f5f6f8;
+  --panel-2: #ebedf0;
+  --border: #d7dbe0;
+  --text: #1e2126;
+  --muted: #6b7280;
+  --accent: #2f6feb;
+}
+
 * {
   box-sizing: border-box;
 }

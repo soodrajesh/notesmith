@@ -339,6 +339,10 @@ export default function App() {
   // Each tab mounts a fresh editor at the top, so drop the previous tab's position.
   useEffect(() => setCursor({ line: 1, col: 1 }), [activeId]);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = settings.theme;
+  }, [settings.theme]);
+
   /* ── Shortcuts ─────────────────────────────────────────── */
 
   useEffect(() => {
@@ -518,6 +522,7 @@ export default function App() {
                   filename={activeFilename}
                   value={active.body}
                   wrap={isMarkdown}
+                  dark={settings.theme !== 'light'}
                   onChange={onBodyChange}
                   onCursor={(line, col) => setCursor({ line, col })}
                 />

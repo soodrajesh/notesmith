@@ -39,11 +39,12 @@ interface Props {
   filename: string;
   value: string;
   wrap: boolean;
+  dark: boolean;
   onChange: (value: string) => void;
   onCursor?: (line: number, col: number) => void;
 }
 
-export default function Editor({ filename, value, wrap, onChange, onCursor }: Props) {
+export default function Editor({ filename, value, wrap, dark, onChange, onCursor }: Props) {
   const [langExt, setLangExt] = useState<Extension | null>(null);
 
   // Grammars are code-split; load the one matching this file, ignoring stale resolutions.
@@ -89,7 +90,7 @@ export default function Editor({ filename, value, wrap, onChange, onCursor }: Pr
     <CodeMirror
       value={value}
       height="100%"
-      theme={oneDark}
+      theme={dark ? oneDark : 'light'}
       extensions={extensions}
       onChange={onChange}
       basicSetup={{
