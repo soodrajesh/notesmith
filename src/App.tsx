@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import Editor from './Editor';
 import FileTree from './FileTree';
 import QuickOpen from './QuickOpen';
+import FindInFiles from './FindInFiles';
 import { db, newNote, type Note } from './db';
 import {
   closeWorkspace,
@@ -67,6 +68,8 @@ export default function App() {
 
   const [preview, setPreview] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [findFilesOpen, setFindFilesOpen] = useState(false);
+  const [gotoLine, setGotoLine] = useState<{ line: number; token: number } | null>(null);
   const [cursor, setCursor] = useState({ line: 1, col: 1 });
   const [status, setStatus] = useState('');
   const [showSettings, setShowSettings] = useState(false);
@@ -79,6 +82,7 @@ export default function App() {
   const noteTimer = useRef<number | null>(null);
   const booted = useRef(false);
   const sessionRestored = useRef(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const active = tabs.find((t) => t.id === activeId) ?? null;
   const allFiles = useMemo(() => flatten(tree), [tree]);
@@ -229,6 +233,15 @@ export default function App() {
     [tabs, flash],
   );
 
+  const openFileAtLine = useCallback(
+    async (node: TreeNode, line: number) => {
+      await openFile(node);
+      setActiveId(`file:${node.path}`);
+      setGotoLine((prev) => ({ line, token: (prev?.token ?? 0) + 1 }));
+    },
+    [openFile],
+  );
+
   const saveActive = useCallback(async () => {
     if (!active || active.kind !== 'file' || !active.handle) return;
     try {
@@ -274,6 +287,10 @@ export default function App() {
   };
 
   const closeFolder = async () => {
+    const hasDirty = tabs.some((t) => t.kind === 'file' && t.dirty);
+    if (hasDirty && !confirm('Some open files have unsaved changes that will be lost. Close folder anyway?')) {
+      return;
+    }
     await closeWorkspace();
     setTree([]);
     setDirName('');
@@ -546,6 +563,35 @@ export default function App() {
     await refreshNotes();
   };
 
+  const exportNotes = async () => {
+    const all = await db.notes.toArray();
+    const blob = new Blob([JSON.stringify(all, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `notesmith-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    flash('Exported notes');
+  };
+
+  const importNotes = async (file: File) => {
+    try {
+      const imported = JSON.parse(await file.text());
+      if (!Array.isArray(imported)) throw new Error('not an array');
+      let count = 0;
+      for (const note of imported) {
+        if (typeof note?.id !== 'string' || typeof note?.title !== 'string' || typeof note?.body !== 'string') continue;
+        await db.notes.put(note);
+        count++;
+      }
+      await refreshNotes();
+      flash(`Imported ${count} note${count === 1 ? '' : 's'}`);
+    } catch {
+      flash('Could not import — invalid backup file');
+    }
+  };
+
   const closeTab = (id: string) => {
     const tab = tabs.find((t) => t.id === id);
     if (tab?.dirty && !confirm(`${tab.name} has unsaved changes. Close anyway?`)) return;
@@ -586,11 +632,15 @@ export default function App() {
       } else if (mod && e.key.toLowerCase() === 'p' && !e.shiftKey) {
         e.preventDefault();
         if (allFiles.length) setPaletteOpen(true);
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        if (allFiles.length) setFindFilesOpen(true);
       } else if (e.altKey && e.shiftKey && e.key.toLowerCase() === 'f') {
         e.preventDefault();
         handleFormat();
       } else if (e.key === 'Escape') {
         setPaletteOpen(false);
+        setFindFilesOpen(false);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -682,7 +732,26 @@ export default function App() {
         <div className="section notes-section">
           <div className="section-head">
             <span>Notes</span>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <button className="link" onClick={exportNotes} title="Export all notes to JSON">
+                ⬇
+              </button>
+              <button className="link" onClick={() => importInputRef.current?.click()} title="Import notes from JSON">
+                ⬆
+              </button>
+            </div>
           </div>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) importNotes(file);
+              e.target.value = '';
+            }}
+          />
           <input
             className="search"
             placeholder="Search notes…"
@@ -760,6 +829,7 @@ export default function App() {
                   value={active.body}
                   wrap={isMarkdown}
                   dark={settings.theme !== 'light'}
+                  gotoLine={gotoLine}
                   onChange={onBodyChange}
                   onCursor={(line, col) => setCursor({ line, col })}
                 />
@@ -787,7 +857,7 @@ export default function App() {
         ) : (
           <div className="blank">
             <p>No file open</p>
-            <p className="hint">Open a folder, pick a note, or press ⌘P to jump to a file</p>
+            <p className="hint">Open a folder, pick a note, press ⌘P to jump to a file, or ⌘⇧F to find in files</p>
           </div>
         )}
       </main>
@@ -800,6 +870,17 @@ export default function App() {
             openFile(node);
           }}
           onClose={() => setPaletteOpen(false)}
+        />
+      )}
+
+      {findFilesOpen && (
+        <FindInFiles
+          files={allFiles}
+          onPick={(node, line) => {
+            setFindFilesOpen(false);
+            openFileAtLine(node, line);
+          }}
+          onClose={() => setFindFilesOpen(false)}
         />
       )}
 
@@ -830,7 +911,9 @@ A local-first editor. Notes live in your browser; **Open folder…** edits real 
 | Key | Action |
 | --- | --- |
 | \`⌘P\` | Go to file |
+| \`⌘⇧F\` | Find in files |
 | \`⌘S\` | Save file |
+| \`⌥⇧F\` | Format file |
 | \`⌘D\` | Select next occurrence |
 | \`⌘/\` | Toggle comment |
 | \`⌘G\` | Go to line |

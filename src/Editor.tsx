@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import CodeMirror from '@uiw/react-codemirror';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { EditorView, keymap } from '@codemirror/view';
 import { Prec, type Extension } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
@@ -40,12 +40,25 @@ interface Props {
   value: string;
   wrap: boolean;
   dark: boolean;
+  /** Bump `token` (even for a repeated line) to force scrolling/selecting again. */
+  gotoLine?: { line: number; token: number } | null;
   onChange: (value: string) => void;
   onCursor?: (line: number, col: number) => void;
 }
 
-export default function Editor({ filename, value, wrap, dark, onChange, onCursor }: Props) {
+export default function Editor({ filename, value, wrap, dark, gotoLine, onChange, onCursor }: Props) {
   const [langExt, setLangExt] = useState<Extension | null>(null);
+  const cmRef = useRef<ReactCodeMirrorRef>(null);
+
+  useEffect(() => {
+    if (!gotoLine) return;
+    const view = cmRef.current?.view;
+    if (!view) return;
+    const clamped = Math.max(1, Math.min(gotoLine.line, view.state.doc.lines));
+    const line = view.state.doc.line(clamped);
+    view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
+    view.focus();
+  }, [gotoLine]);
 
   // Grammars are code-split; load the one matching this file, ignoring stale resolutions.
   useEffect(() => {
@@ -88,6 +101,7 @@ export default function Editor({ filename, value, wrap, dark, onChange, onCursor
 
   return (
     <CodeMirror
+      ref={cmRef}
       value={value}
       height="100%"
       theme={dark ? oneDark : 'light'}
