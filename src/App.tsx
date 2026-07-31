@@ -336,7 +336,11 @@ export default function App() {
   };
 
   const handleDeleteFile = async (filePath: string) => {
-    if (!confirm(`Delete ${filePath}?`)) return;
+    const openTab = tabs.find((t) => t.id === `file:${filePath}`);
+    const warning = openTab?.dirty
+      ? `${openTab.name} has unsaved changes that will be lost. Delete ${filePath}?`
+      : `Delete ${filePath}?`;
+    if (!confirm(warning)) return;
     try {
       const node = getNodeByPath(filePath);
       if (!node || node.kind !== 'file') return;
@@ -355,7 +359,11 @@ export default function App() {
   };
 
   const handleDeleteFolder = async (dirPath: string) => {
-    if (!confirm(`Delete folder ${dirPath} and all contents?`)) return;
+    const hasDirty = tabs.some((t) => t.path?.startsWith(dirPath) && t.dirty);
+    const warning = hasDirty
+      ? `Folder ${dirPath} has unsaved changes that will be lost. Delete folder and all contents?`
+      : `Delete folder ${dirPath} and all contents?`;
+    if (!confirm(warning)) return;
     try {
       const node = getNodeByPath(dirPath);
       if (!node || node.kind !== 'directory') return;
@@ -402,8 +410,8 @@ export default function App() {
       );
       setActiveId((cur) => (cur === oldId ? newId : cur));
       flash(`Renamed to ${newName}`);
-    } catch {
-      flash(`Could not rename ${oldName}`);
+    } catch (err) {
+      flash(err instanceof Error ? err.message : `Could not rename ${oldName}`);
     }
   };
 
@@ -413,6 +421,10 @@ export default function App() {
     const oldName = node.name;
     const newName = prompt('Rename folder:', oldName);
     if (!newName || newName === oldName) return;
+    const hasDirty = tabs.some((t) => t.path?.startsWith(dirPath) && t.dirty);
+    if (hasDirty && !confirm('Some open files in this folder have unsaved changes that will be lost. Continue renaming?')) {
+      return;
+    }
     try {
       const parentPath = dirPath.includes('/') ? dirPath.slice(0, dirPath.lastIndexOf('/')) : '';
       const parentHandle = parentPath
@@ -426,8 +438,8 @@ export default function App() {
       setTabs((prev) => prev.filter((t) => !t.path?.startsWith(dirPath)));
       setActiveId((id) => (id?.startsWith(`file:${dirPath}`) ? null : id));
       flash(`Renamed to ${newName}`);
-    } catch {
-      flash(`Could not rename ${oldName}`);
+    } catch (err) {
+      flash(err instanceof Error ? err.message : `Could not rename ${oldName}`);
     }
   };
 
@@ -447,6 +459,13 @@ export default function App() {
     const destNode = getNodeByPath(destDirPath);
     if (!node || !destNode || destNode.kind !== 'directory') return;
     const destHandle = destNode.handle as FileSystemDirectoryHandle;
+
+    if (srcKind === 'directory') {
+      const hasDirty = tabs.some((t) => t.path?.startsWith(srcPath) && t.dirty);
+      if (hasDirty && !confirm('Some open files in this folder have unsaved changes that will be lost. Continue moving?')) {
+        return;
+      }
+    }
 
     try {
       if (srcKind === 'file') {
@@ -476,8 +495,8 @@ export default function App() {
         setActiveId((id) => (id?.startsWith(`file:${srcPath}`) ? null : id));
       }
       flash(`Moved ${node.name}`);
-    } catch {
-      flash(`Could not move ${node.name}`);
+    } catch (err) {
+      flash(err instanceof Error ? err.message : `Could not move ${node.name}`);
     }
   };
 
@@ -543,6 +562,18 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme;
   }, [settings.theme]);
+
+  // Notes autosave, but file edits only persist on ⌘S — warn before losing unsaved file work.
+  useEffect(() => {
+    const hasDirtyFile = tabs.some((t) => t.dirty);
+    if (!hasDirtyFile) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [tabs]);
 
   /* ── Shortcuts ─────────────────────────────────────────── */
 

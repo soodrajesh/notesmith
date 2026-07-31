@@ -175,12 +175,37 @@ async function copyDir(
   }
 }
 
-/** Renames or relocates a file. The File System Access API has no native move, so this copies then deletes the original. */
+async function fileExists(dir: FileSystemDirectoryHandle, name: string): Promise<boolean> {
+  try {
+    await dir.getFileHandle(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function dirExists(dir: FileSystemDirectoryHandle, name: string): Promise<boolean> {
+  try {
+    await dir.getDirectoryHandle(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Renames or relocates a file. The File System Access API has no native move, so this copies
+ * then deletes the original. `getFileHandle(name, {create: true})` silently reuses an existing
+ * file rather than failing, so we check for a collision up front instead of clobbering it.
+ */
 export async function moveFile(
   src: FileSystemFileHandle,
   destParent: FileSystemDirectoryHandle,
   destName: string,
 ): Promise<void> {
+  if (await fileExists(destParent, destName)) {
+    throw new Error(`"${destName}" already exists`);
+  }
   await copyFile(src, destParent, destName);
   await deleteEntry(src);
 }
@@ -191,6 +216,9 @@ export async function moveFolder(
   destParent: FileSystemDirectoryHandle,
   destName: string,
 ): Promise<void> {
+  if (await dirExists(destParent, destName)) {
+    throw new Error(`"${destName}" already exists`);
+  }
   await copyDir(src, destParent, destName);
   await deleteEntryRecursive(src);
 }
