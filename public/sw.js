@@ -21,7 +21,9 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   // Vite content-hashes build assets, so a given URL's content never changes — cache-first is safe.
-  if (url.pathname.startsWith('/assets/')) {
+  // Match by segment rather than a leading-slash prefix so this still works when the app is
+  // served from a subpath (e.g. irajeshsood.com/notesmith/) instead of the origin root.
+  if (url.pathname.includes('/assets/')) {
     event.respondWith(
       caches.open(RUNTIME_CACHE).then(async (cache) => {
         const cached = await cache.match(request);
