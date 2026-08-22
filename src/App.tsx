@@ -1,6 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Editor from './Editor';
 import FileTree from './FileTree';
 import QuickOpen from './QuickOpen';
@@ -32,6 +30,8 @@ import SettingsPanel from './SettingsPanel';
 import { loadSettings, saveSettings, type Settings as SettingsType } from './settings';
 import { loadSession, saveSession, type SessionTab } from './session';
 import './App.css';
+
+const MarkdownPreview = lazy(() => import('./MarkdownPreview'));
 
 type WorkspaceState = 'none' | 'open' | 'needs-permission';
 
@@ -836,7 +836,9 @@ export default function App() {
               </div>
               {showPreview && (
                 <div className="pane preview markdown">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{active.body}</ReactMarkdown>
+                  <Suspense fallback={null}>
+                    <MarkdownPreview body={active.body} />
+                  </Suspense>
                 </div>
               )}
             </div>
