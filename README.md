@@ -35,6 +35,10 @@ Linter bundles are code-split and fetched on first use, so opening a `.py` file 
 - **Files** — open a folder and edit real files on disk via the File System Access API. `⌘S` saves; tabs show a dot while unsaved.
 - **Notes** — quick notes kept in IndexedDB, autosaved, full-text searchable. Name a note `main.tf` and it edits as Terraform.
 
+### Settings
+
+Font size, tab width, theme, and a collapsible "Contact me" form (posts cross-origin to `gogenops.com/api/contact`, a shared backend used by several of the maintainer's other sites — no env vars needed here).
+
 ## Shortcuts
 
 | Key | Action |
