@@ -1,4 +1,5 @@
 import type { Settings } from './settings';
+import ContactForm from './ContactForm';
 
 interface Props {
   settings: Settings;
@@ -68,6 +69,8 @@ export default function SettingsPanel({ settings, onClose, onChange }: Props) {
             </div>
           </div>
         </div>
+
+        <ContactForm />
       </div>
     </div>
   );
