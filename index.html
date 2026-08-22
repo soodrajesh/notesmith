@@ -9,6 +9,32 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="A local-first code editor and Markdown notepad that runs entirely in the browser." />
     <title>notesmith</title>
+
+    <!-- GA4, shared with irajeshsood.com's measurement ID — this tool is served
+         under irajeshsood.com/notesmith/ via a rewrite, and a visit here is
+         part of that same user journey (same pattern as gogenops.com sharing
+         one ID across its landing page + calculators). Hostname-gated because
+         this repo is ALSO directly live at mynotesmith.vercel.app — without the
+         check, that separate deployment's traffic (and Vercel preview builds)
+         would misreport as irajeshsood.com visits.
+         anonymize_ip on; page_location strips the query string. -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-LSL40CXDZK"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag() { dataLayer.push(arguments); }
+      gtag('js', new Date());
+      if (location.hostname === 'irajeshsood.com') {
+        gtag('config', 'G-LSL40CXDZK', {
+          anonymize_ip: true,
+          send_page_view: true,
+          page_location: (function () {
+            var url = new URL(window.location.href);
+            url.search = '';
+            return url.toString();
+          })(),
+        });
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
