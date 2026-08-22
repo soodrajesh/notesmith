@@ -816,3 +816,71 @@ button.link:hover {
   min-width: 40px;
   text-align: right;
 }
+
+/* ── Settings: contact form ───────────────────────────────────── */
+
+.settings-contact {
+  border-top: 1px solid var(--border);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.contact-toggle {
+  align-self: flex-start;
+  font-size: 12px;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+.contact-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.contact-fields input[type='text'],
+.contact-fields input[type='email'],
+.contact-fields textarea {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+}
+
+.contact-fields textarea {
+  resize: vertical;
+}
+
+.contact-fields input:focus,
+.contact-fields textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Honeypot — off-screen, never seen or filled by a real visitor. */
+.contact-honeypot {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.contact-status {
+  font-size: 12px;
+  margin: 0;
+}
+
+.contact-status.ok {
+  color: var(--accent);
+}
+
+.contact-status.error {
+  color: #e5484d;
+}
