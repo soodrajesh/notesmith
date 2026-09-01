@@ -29,7 +29,7 @@ export default function ContactForm() {
       const res = await fetch(CONTACT_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, message, company }),
+        body: JSON.stringify({ name, email, message, company, pageUrl: window.location.href }),
       });
       const data: { ok: boolean; error?: string } = await res.json();
       if (res.ok && data.ok) {
