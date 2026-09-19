@@ -59,16 +59,16 @@ path that touches real files on disk, and it only works in Chromium browsers —
 export const fsSupported = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
 ```
 
-Firefox and Safari never see the "Open folder…" button; `App.tsx` shows *"Opening
-folders needs Chrome or Edge"* instead. `src/fs.d.ts` hand-declares the handle/
+Firefox and Safari never see the "Open folder…" button; `components/FilesSection.tsx`
+shows *"Opening folders needs Chrome or Edge"* instead. `src/fs.d.ts` hand-declares the handle/
 permission types (`FileSystemHandle.queryPermission`/`requestPermission`,
 `window.showDirectoryPicker`) since TypeScript's own lib.dom.d.ts doesn't ship them yet.
 
 ### Permission model and the reconnect flow
 
 The browser will not silently let a page keep write access to a folder across reloads —
-every session has to re-establish permission. `App.tsx` handles the three possible
-states as a `WorkspaceState`:
+every session has to re-establish permission. `hooks/useWorkspace.ts` handles the three
+possible states as a `WorkspaceState` (declared in `types.ts`):
 
 ```typescript
 type WorkspaceState = 'none' | 'open' | 'needs-permission';
@@ -131,7 +131,7 @@ of that name** rather than throwing. Without the `fileExists` guard up front, re
 `b.txt` to an existing `a.txt` would quietly clobber `a.txt`'s contents. Folder move is
 the same pattern recursively (`copyDir` walks and copies every child, then
 `deleteEntryRecursive` removes the original tree). `deleteEntry`/`deleteEntryRecursive`
-both depend on `FileSystemHandle.remove()`, which is why `App.tsx` shows *"Delete not
+both depend on `FileSystemHandle.remove()`, which is why `hooks/useWorkspace.ts` surfaces *"Delete not
 supported in this browser"* rather than failing silently on browsers that implement File
 System Access but not the newer removal method.
 
@@ -204,8 +204,9 @@ persisted.
 ### Session restore
 
 `session.ts` persists open tabs (400ms debounced, same `db.settings` table) as a list of
-`SessionTab` — either `{ kind: 'note', noteId }` or `{ kind: 'file', path, handle }`. On
-boot, `App.tsx` restores notes unconditionally (they're always readable) but for file
+`SessionTab` — either `{ kind: 'note', noteId }` or `{ kind: 'file', path, handle }`
+(`snapshotSession()` builds it; `hooks/useBoot.ts` schedules the save). On boot,
+`restoreSessionTabs()` restores notes unconditionally (they're always readable) but for file
 tabs it checks `handle.queryPermission({ mode: 'readwrite' }) === 'granted'` first and
 silently drops any tab that fails — a stale or permission-revoked handle just doesn't
 reappear rather than throwing. The previously-active tab is re-selected by matching
@@ -243,7 +244,7 @@ per-file, asynchronously, independent of each other:
    never both up front.
 2. **Deep linter** (see next section) — resolved by extension via `lintKind()`.
 
-A note titled `main.tf` is treated as a real Terraform file: `App.tsx` computes
+A note titled `main.tf` is treated as a real Terraform file: `hooks/useTabs.ts` computes
 `activeFilename` by appending `.md` only when the note's title has no dot at all, so
 `main.tf` keeps its extension and gets the HCL grammar (but, per the linter table below,
 only grammar-level syntax checking — `.tf` has no deep linter).
@@ -255,7 +256,7 @@ only grammar-level syntax checking — `.tf` has no deep linter).
 `⌘D` select-next-occurrence, `⌘/` toggle comment, `⌘G` go to line, `⌘⇧K` delete line,
 `⌥↑`/`⌥↓` move line, `⇧⌥↑`/`⇧⌥↓` duplicate line, `⌘]`/`⌘[` indent/outdent. App-level
 shortcuts (`⌘S` save, `⌘P` quick-open, `⌘⇧F` find-in-files, `⌥⇧F` format) are wired in
-`App.tsx`'s own `keydown` listener, not through CodeMirror.
+`hooks/useShortcuts.ts`' own `keydown` listener, not through CodeMirror.
 
 ## Linting Pipeline
 
@@ -357,21 +358,53 @@ from the linter architecture's per-type code-splitting described in the README, 
 knowing if bundle size on first format matters: the first `⌥⇧F` of a session, on any
 supported file, pulls in the full Prettier plugin set.
 
-`formatCode()` throws on a parse error (surfaced by `App.tsx` as "Could not format —
+`formatCode()` throws on a parse error (surfaced by `useTabs.formatActive` as "Could not format —
 check for syntax errors"); on success, the tab body is replaced and marked dirty (for
 file tabs) or left to the normal note-autosave path.
 
-## `App.tsx`: known technical debt
+## Application structure
 
-`src/App.tsx` is a ~930-line monolith holding nearly all application state and
-behavior in one component: the file tree, every tab, the active editor's wiring, quick
-notes, settings, session restore, import/export, quick-open, find-in-files, and every
-file-tree CRUD handler (create/delete/rename/move for files and folders). This is a
-known, deliberate trade-off, not an oversight — the app grew feature-by-feature in this
-file and a refactor (splitting file-tree operations, tab/session management, and
-notes into their own hooks or modules) has not yet been scoped. Treat any new feature
-here as adding to debt that will need paying down eventually; don't compound it by
-routing unrelated concerns through unrelated state in this file if you can avoid it.
+`App.tsx` (~190 lines) is only composition: it calls the hooks below, wires their results
+into the components, and owns a handful of pure-UI states (preview toggle, which overlay is
+open, cursor position). It used to be a ~930-line component holding all of this inline.
+
+```
+src/
+├─ App.tsx                     composition only
+├─ types.ts                    Tab, WorkspaceState, tab-id helpers (note:<id> / file:<path>)
+├─ treeUtils.ts                findNode / flattenFiles / parentPath / joinPath / isUnder
+├─ welcome.ts                  first-run note body
+├─ session.ts                  Session type, snapshotSession(), restoreSessionTabs()
+├─ hooks/
+│  ├─ useFlash.ts              status-bar message with a restartable timer
+│  ├─ useNotes.ts              notes list + per-note debounced autosave + import/export
+│  ├─ useTabs.ts               tabs, active tab, open/save/format/close, dirty-guard
+│  ├─ useWorkspace.ts          opened folder tree + create/rename/move/delete
+│  ├─ useSettings.ts           settings state, theme + CSS-variable application
+│  ├─ useShortcuts.ts          app-level keyboard shortcuts
+│  └─ useBoot.ts               one-time startup + debounced session persistence
+├─ components/                 Sidebar (FilesSection, NotesSection), TabBar, Toolbar, StatusBar
+└─ Editor, FileTree, QuickOpen, FindInFiles, SettingsPanel, ContactForm, MarkdownPreview
+```
+
+Data flows one way: hooks own state and expose actions, `App.tsx` connects them, components
+render. The two hooks that must touch tabs (`useWorkspace`, and `App`'s note handlers) do so
+only through `useTabs`' narrow operations (`dropFileTabsUnder`, `retargetFileTab`,
+`hasDirtyUnder`, …) rather than reaching into tab state.
+
+### Behavior worth knowing (and previously wrong)
+
+- **Note autosave is per note, and merged.** `useNotes.scheduleSave(id, patch)` debounces
+  each note separately and merges title/body patches, so switching notes — or renaming a
+  note right after typing — mid-debounce no longer drops the earlier edit. Pending writes
+  are also flushed on `visibilitychange`/`pagehide`.
+- **Tree mutations always re-read from the root.** `useWorkspace` keeps the root directory
+  handle in a ref and `refreshTree()` re-walks from it. Creating a file or folder used to
+  re-read only the subfolder it was made in and replace the whole tree with that subtree.
+- **"Is this path inside that folder" is a segment test** (`isUnder`), not a string
+  prefix, so operating on `src` no longer touches `src2/…` tabs.
+- **Imported notes are normalized.** Missing `createdAt`/`updatedAt` are filled in; the note
+  list sorts on the `updatedAt` index, so a note without it would import but never appear.
 
 ## Settings & Contact Form
 
@@ -447,22 +480,36 @@ if (url.pathname.includes('/assets/')) { /* cache-first */ }
 
 and it's registered with a relative path too (`main.tsx`: `navigator.serviceWorker.register('./sw.js')`).
 
-### No `vercel.json` — the only one of the maintainer's tools without one
+### `vercel.json`: security headers and caching
 
-This repo has **zero platform configuration**: no `vercel.json`, no CSP headers, no
-custom redirects/rewrites, no cron config. It is deployed as a plain static Vite build
-on Vercel's zero-config defaults (`npm run build` → serve `dist/`). This is notable
-specifically because it's the outlier among the maintainer's other small React tools,
-which typically carry at least a `vercel.json` for headers/CSP. Two concrete
-consequences:
+`vercel.json` sets, for every path: a Content-Security-Policy, `X-Content-Type-Options:
+nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, and a
+`Permissions-Policy` that turns off camera/microphone/geolocation/payment/USB. It also caches
+`/assets/*` as immutable (they're content-hashed) and keeps `/sw.js` revalidating on every
+load. Headers set on this deployment pass through when it's served under
+`irajeshsood.com/notesmith/`, so both origins get them.
 
-- **No CSP** means nothing in-platform restricts the Contact form's cross-origin
-  `fetch()` to `gogenops.com` — it works precisely because there's no `connect-src`
-  directive to permit. If a CSP is ever added here, it must explicitly allow `connect-src
-  https://gogenops.com` or the form will start failing silently in browsers that enforce
-  it.
-- **No security headers** (`X-Frame-Options`, `X-Content-Type-Options`, etc.) are set at
-  all — whatever Vercel's own defaults provide is all this app has.
+The CSP is deliberately tight, and each allowance is there for a reason:
+
+| Directive | Allows | Why |
+| --- | --- | --- |
+| `script-src` | `'self'`, `'unsafe-eval'`, `www.googletagmanager.com` | GA loader, and the JS linter. **No `'unsafe-inline'`** — the GA config lives in `public/ga.js`, not inline in `index.html`. |
+| `style-src` | `'self'`, `'unsafe-inline'` | CodeMirror injects `<style>` tags at runtime. |
+| `connect-src` | `'self'`, `gogenops.com`, Google Analytics hosts | The Contact form's cross-origin `fetch()` and GA beacons. **If the contact endpoint ever moves, update this or the form fails silently.** |
+| *(no `worker-src`)* | falls back to `script-src` | The only worker is the same-origin service worker; the linters and Prettier run on the main thread as lazy-loaded chunks. |
+| `frame-ancestors` | `'none'` | Can't be embedded; matches `X-Frame-Options`. |
+
+**Why `'unsafe-eval'`:** the JavaScript linter is ESLint (`eslint-linter-browserify`), which
+compiles each rule's option schema with Ajv via `new Function(...)`. Without the allowance
+JS linting fails silently (the console shows *"Content Security Policy … blocks the use of
+`eval`"* and no diagnostics appear); every other linter, Prettier, and the editor keep
+working, so it's easy to miss. Scripts still can't be inline or load from arbitrary hosts, so
+an injected `<script>` remains blocked. Dropping this allowance would mean replacing the ESLint
+integration or precompiling its schemas — **test JS linting under the real headers after any
+CSP change** (open a note named `x.js` containing `var a = ;` and expect a squiggle).
+
+Because there's no `'unsafe-inline'` for scripts, don't add an inline `<script>` to
+`index.html`; put it in `public/` and reference it like `ga.js`.
 
 ### PWA
 
@@ -534,16 +581,15 @@ GA4 ID across its landing page and calculator sub-apps).
   `gogenops/api/_lib/allowedOrigins.ts`, not anything in this repo — there is nothing
   here that will surface that dependency if it's missed beyond the form failing at
   runtime.
-- **No CSP anywhere in this app** — see [Deployment](#deployment). Any future
-  `vercel.json` added here must explicitly allow the Contact form's cross-origin fetch.
-- **`App.tsx` is a single ~930-line component holding nearly all state** — see
-  [`App.tsx`: known technical debt](#apptsx-known-technical-debt) above. Not a gotcha to
-  fix opportunistically; a real refactor is the right eventual answer, not yet scoped.
+- **A CSP is enforced** — see [Deployment](#deployment). A new third-party script, font,
+  image host, or fetch target needs a matching directive in `vercel.json`, or it will be
+  blocked in production even though it works in `npm run dev`.
 
 ## Future Enhancements
 
-- [ ] Refactor `App.tsx` into smaller pieces (file-tree operations, tab/session
-      management, notes CRUD as separate hooks/modules) — the flagged technical debt above
+- [x] Refactor `App.tsx` into smaller pieces — done, see [Application structure](#application-structure)
+- [ ] Automated tests for the hooks (none exist; `useNotes` and `useWorkspace` are the
+      ones most worth covering, since they're pure state + I/O)
 - [ ] Code-split Prettier's plugin bundle per file type, matching the linter architecture
 - [ ] Offline-first precache of the app shell (currently network-first with cache
       fallback only — a first-ever offline load with no prior cache has nothing to serve)
