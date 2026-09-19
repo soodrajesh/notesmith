@@ -10,5 +10,20 @@ interface Props {
 // statically imported into the main bundle even for sessions that never
 // open a markdown file.
 export default function MarkdownPreview({ body }: Props) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>;
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        // GFM task-list checkboxes are read-only; without a label a screen reader announces a bare "checkbox".
+        input: ({ node: _node, ...props }) =>
+          props.type === 'checkbox' ? (
+            <input {...props} aria-label={props.checked ? 'Completed task' : 'Incomplete task'} />
+          ) : (
+            <input {...props} />
+          ),
+      }}
+    >
+      {body}
+    </ReactMarkdown>
+  );
 }
