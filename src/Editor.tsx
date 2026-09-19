@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { EditorView, keymap } from '@codemirror/view';
 import { Prec, type Extension } from '@codemirror/state';
-import { oneDark } from '@codemirror/theme-one-dark';
+import { oneDarkHighlightStyle, oneDarkTheme } from '@codemirror/theme-one-dark';
 import { lintGutter } from '@codemirror/lint';
-import { indentUnit } from '@codemirror/language';
+import { HighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language';
 import {
   copyLineDown,
   copyLineUp,
@@ -34,6 +34,24 @@ const sublimeKeymap = Prec.high(
     { key: 'Mod-[', run: indentLess, preventDefault: true },
   ]),
 );
+
+/**
+ * One Dark's coral (#e06c75) is 4.1–4.4:1 against its own backgrounds, just under the 4.5:1 WCAG AA
+ * minimum for text. Rather than layering a second highlight style on top (whose CSS would tie with
+ * the original's), rebuild One Dark's own style with the coral swapped for a lighter one.
+ */
+const ONE_DARK_CORAL = '#e06c75';
+const ACCESSIBLE_CORAL = '#f28b94';
+const oneDarkAccessible: Extension = [
+  oneDarkTheme,
+  syntaxHighlighting(
+    HighlightStyle.define(
+      oneDarkHighlightStyle.specs.map((spec) =>
+        spec.color === ONE_DARK_CORAL ? { ...spec, color: ACCESSIBLE_CORAL } : spec,
+      ),
+    ),
+  ),
+];
 
 interface Props {
   filename: string;
@@ -87,6 +105,8 @@ export default function Editor({ filename, value, wrap, dark, gotoLine, onChange
       indentUnit.of('  '),
       lintGutter(),
       lintExtension(filename),
+      // The editing surface is a role="textbox" element and needs an accessible name.
+      EditorView.contentAttributes.of({ 'aria-label': `Editor for ${filename || 'note'}` }),
       EditorView.updateListener.of((u) => {
         if (!onCursor || !u.selectionSet) return;
         const head = u.state.selection.main.head;
@@ -104,7 +124,7 @@ export default function Editor({ filename, value, wrap, dark, gotoLine, onChange
       ref={cmRef}
       value={value}
       height="100%"
-      theme={dark ? oneDark : 'light'}
+      theme={dark ? oneDarkAccessible : 'light'}
       extensions={extensions}
       onChange={onChange}
       basicSetup={{
